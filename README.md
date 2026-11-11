@@ -4,6 +4,8 @@ Free skills that turn Claude into a helpful second pair of eyes for your Shopify
 
 **Every skill is read-only.** It looks at stores, it never changes them.
 
+Made by [Junifia](https://junifia.ca), a Shopify and AI development team for growing brands. [Need a hand with what the reports find?](#need-a-hand)
+
 <!-- Demo GIF placeholder: record a skill run, save it as docs/demo.gif, then uncomment the line below. -->
 <!-- ![Demo](docs/demo.gif) -->
 
@@ -76,6 +78,20 @@ Then ask your question in any session.
 - **Evidence, not guesses.** Numbers in reports are computed from data the skill actually read. When something can't be found, the report says "not detected" and why.
 - **Your data stays in your conversation.** Nothing about your store is sent anywhere except to Claude, in the chat you are already using.
 - **Not legal or financial advice.** Reports point out likely problems and opportunities. You make the call.
+
+## Need a hand?
+
+These skills tell you what to fix. If you'd rather have someone fix it with you, that's what we do.
+
+[Junifia](https://junifia.ca) is a Shopify and AI development team for growing ecommerce brands. We work like your own dev department, without the hiring:
+
+- **Shopify development.** Theme changes, custom apps, checkout features and integrations with the tools you already use.
+- **Getting ready for AI shopping.** Clean product data so AI shopping assistants can find and recommend your products, and AI customer support with [eSquad](https://esquad.ai).
+- **An ongoing partner.** A team that knows your store, fixes problems quickly and tells you what's worth improving next.
+
+Not sure where to start? Bring the report from one of these skills. It's a good place to begin the conversation.
+
+**[Talk to us at junifia.ca](https://junifia.ca)**
 
 ## Contributing
 
