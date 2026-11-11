@@ -10,11 +10,17 @@ Usage:
   python3 teardown.py https://competitor.com --track [--snapshot-dir DIR]
   python3 teardown.py https://competitor.com --track --previous old.json
 
+A regional storefront path such as /en-ca is kept, and a product page URL is
+read too (price, availability, promo lines).
+
 Politeness rules (not configurable upward):
   - robots.txt is fetched first and respected for every request
   - at most 15 requests per store, one at a time, with a delay between them
   - a 429 is retried once only if the store asks for a short wait
   - 401, 403, captchas and password pages are never worked around
+
+Exit code 2 means no store could be reached at all (network blocked from this
+environment). The JSON then has "fetch_error": "network".
 """
 
 import argparse
@@ -31,7 +37,7 @@ from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 USER_AGENT = (
     "Mozilla/5.0 (compatible; JunifiaTeardown/" + VERSION
     + "; +https://github.com/junifia/skills)"
@@ -56,31 +62,43 @@ SEASONAL_COLLECTION_RE = re.compile(
 PROMO_RE = re.compile(
     r"(\d{1,2}\s?% off|up to \d{1,2}\s?%|black friday|cyber monday|buy one,? get one|\bbogo\b|"
     r"free gift|gift with purchase|subscribe (?:&|and) save|sitewide|site-wide|"
-    r"free (?:\w+ )?(?:shipping|delivery))",
+    r"free (?:\w+ )?(?:shipping|delivery)|\d{1,2}\s?% de (?:rabais|réduction)|jusqu'à \d{1,2}\s?%|vendredi fou|"
+    r"livraison (?:\w+ )?(?:gratuite|offerte))",
     re.I,
 )
 AMOUNT = r"\d{1,3}(?:[,.]\d{3})+(?:[.,]\d{2})?|\d{1,6}(?:[.,]\d{2})?"
 MONEY_RE = re.compile(
     r"(?:(?P<sym>[$£€¥₹]|[A-Z]{1,3}\$|CHF|kr)\s?(?P<a1>" + AMOUNT + r"))"
-    r"|(?:(?P<a2>" + AMOUNT + r")\s?(?P<code>USD|CAD|AUD|NZD|EUR|GBP|SEK|NOK|DKK|CHF|JPY|€|kr))"
+    r"|(?:(?P<a2>" + AMOUNT + r")\s?(?P<code>USD|CAD|AUD|NZD|EUR|GBP|SEK|NOK|DKK|CHF|JPY|€|kr|\$))"
 )
-FREE_SHIP_RE = re.compile(r"free (?:\w+ ){0,2}(?:shipping|delivery)|ships? free|shipping is free", re.I)
-THRESHOLD_WORDS_RE = re.compile(r"over|above|from|orders of|spend|or more|\+|minimum|when you", re.I)
-RETURN_DAYS_RE = re.compile(r"(\d{1,3})[\s-]*(?:\(\d{1,3}\)\s*)?(?:calendar |business )?days?\b", re.I)
-RETURN_WORDS_RE = re.compile(r"return|refund|exchange", re.I)
+FREE_SHIP_RE = re.compile(
+    r"free (?:\w+ ){0,2}(?:shipping|delivery)|ships? free|shipping is free|"
+    r"(?:livraison|expédition) (?:\w+ )?(?:gratuite|offerte)", re.I)
+THRESHOLD_WORDS_RE = re.compile(
+    r"over|above|from|orders of|spend|or more|\+|minimum|when you|"
+    r"achats? de|commandes? de|et plus|plus de|à partir de|dès", re.I)
+RETURN_DAYS_RE = re.compile(r"(\d{1,3})[\s-]*(?:\(\d{1,3}\)\s*)?(?:calendar |business )?(?:days?|jours?)\b", re.I)
+RETURN_WORDS_RE = re.compile(r"return|refund|exchange|retour|rembours|échange", re.I)
 NO_RETURNS_RE = re.compile(
     r"(?:do not|don't|don’t|does not|cannot|can't|can’t|unable to) (?:accept|offer|take) (?:any )?returns|"
-    r"\bno returns\b|all sales (?:are )?final", re.I)
+    r"\bno returns\b|all sales (?:are )?final|aucun retour|n'acceptons (?:pas|aucun) (?:les )?retours|"
+    r"toutes les ventes sont finales", re.I)
 RETURN_TERMS = [
-    ("free returns", re.compile(r"free returns?", re.I)),
-    ("free exchanges", re.compile(r"free exchanges?", re.I)),
-    ("final sale items", re.compile(r"final sale", re.I)),
+    ("free returns", re.compile(r"free returns?|retours? gratuits?", re.I)),
+    ("free exchanges", re.compile(r"free exchanges?|échanges? gratuits?", re.I)),
+    ("final sale items", re.compile(r"final sale|ventes? finales?", re.I)),
     ("restocking fee", re.compile(r"restocking fee", re.I)),
     ("return fee", re.compile(r"[$£€]\s?\d+(?:[.,]\d{2})? returns?|return (?:shipping )?(?:fee|label) (?:of|is)", re.I)),
-    ("store credit", re.compile(r"store credit", re.I)),
-    ("money-back guarantee", re.compile(r"money[- ]back guarantee", re.I)),
+    ("store credit", re.compile(r"store credit|crédit (?:en magasin|boutique)", re.I)),
+    ("money-back guarantee", re.compile(r"money[- ]back guarantee|satisfait ou remboursé|garantie de remboursement", re.I)),
 ]
 DEEP_DISCOUNT = 0.70
+# Regional storefront prefixes like /en-ca or /fr. Bare two-letter segments
+# only count when they are a common language code, so /go/... is not a locale.
+LOCALE_RE = re.compile(r"^/([a-z]{2}-[a-z]{2}|en|fr|de|es|it|nl|pt|ja|ko|zh|sv|da|no|nb|fi|pl|cs)(?=/|$)", re.I)
+PRODUCT_PATH_RE = re.compile(r"/products/([^/?#]+)", re.I)
+LD_JSON_RE = re.compile(r"<script[^>]*application/ld\+json[^>]*>(.*?)</script>", re.S | re.I)
+HTML_LANG_RE = re.compile(r"<html[^>]*\blang=[\"']?([A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?)", re.I)
 
 
 # ---------------------------------------------------------------- robots.txt
@@ -134,14 +152,16 @@ def robots_allows(rules, path):
 class Fetcher:
     """Polite, budgeted, robots-aware GET client for one store."""
 
-    def __init__(self, origin, delay, max_wait):
+    def __init__(self, origin, delay, max_wait, prefix=""):
         self.origin = origin
+        self.prefix = prefix
         self.delay = delay
         self.max_wait = max_wait
         self.made = 0
         self.log = []
         self.rules = []
         self.robots_status = "not fetched"
+        self.network_error = None
         self._last = 0.0
 
     def _wait(self, seconds=None):
@@ -174,21 +194,32 @@ class Fetcher:
                 "text": body.decode(charset or "utf-8", "replace")}
 
     def load_robots(self):
+        """RFC 9309: 4xx means no rules (allow all), 5xx means disallow all.
+        No response at all is a network problem on our side, not a store rule."""
         res = self._raw_get(self.origin + "/robots.txt")
         self.log.append({"path": "/robots.txt", "status": res["status"]})
-        if res["status"] == 200:
+        self.rules = []
+        status = res["status"]
+        if status is None:
+            self.rules = [(False, "/")]
+            self.network_error = res.get("error") or "network error"
+            self.robots_status = "could not connect"
+        elif status == 200:
             self.rules = parse_robots(res["text"])
             self.robots_status = "found"
             final = urllib.parse.urlsplit(res["url"])
             self.origin = f"{final.scheme}://{final.netloc}"
-        elif res["status"] is not None and 400 <= res["status"] < 500:
+        elif 400 <= status < 500:
             self.robots_status = "none (all allowed)"
         else:
             self.rules = [(False, "/")]
-            self.robots_status = "unreachable (treated as disallow all)"
+            self.robots_status = f"server error (HTTP {status}), treated as disallow all"
 
-    def get(self, path, label=None):
-        """Return the response dict, or a dict with 'skipped' explaining why."""
+    def get(self, path, label=None, localized=True):
+        """Return the response dict, or a dict with 'skipped' explaining why.
+        Storefront paths get the regional prefix unless localized is False."""
+        if localized and self.prefix:
+            path = self.prefix + ("" if path == "/" else path)
         entry = {"path": path}
         if label:
             entry["label"] = label
@@ -209,6 +240,7 @@ class Fetcher:
         entry["status"] = res["status"]
         if res.get("error"):
             entry["error"] = res["error"]
+            self.network_error = self.network_error or res["error"]
         return res
 
 
@@ -422,7 +454,7 @@ def find_free_shipping(sources):
             if threshold:
                 entry["threshold"] = threshold[0]
                 entry["currency_symbol"] = threshold[1]
-            elif re.search(r"all orders|every order|on everything", window, re.I):
+            elif re.search(r"all orders|every order|on everything|toutes les commandes", window, re.I):
                 entry["threshold"] = 0
             candidates.append(entry)
             if len(candidates) >= 6:
@@ -707,30 +739,114 @@ def _bare_host(host):
     return host[4:] if host.startswith("www.") else host
 
 
-def normalize_origin(url):
+def split_input(url):
+    """Return (origin, regional prefix such as '/en-ca' or '', rest of the path)."""
     url = url.strip()
     if not re.match(r"^https?://", url, re.I):
         url = "https://" + url
     parts = urllib.parse.urlsplit(url)
-    return f"https://{parts.netloc.lower()}"
+    path = parts.path or "/"
+    m = LOCALE_RE.match(path)
+    prefix = "/" + m.group(1).lower() if m else ""
+    return f"https://{parts.netloc.lower()}", prefix, path[len(prefix):] or "/"
+
+
+def structured_offer(raw_html):
+    """Name, price and availability from the page's schema.org Product data."""
+    products = []
+
+    def walk(node):
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+        elif isinstance(node, dict):
+            kinds = node.get("@type")
+            kinds = kinds if isinstance(kinds, list) else [kinds]
+            if "Product" in kinds or "ProductGroup" in kinds:
+                products.append(node)
+            for key in ("@graph", "hasVariant"):
+                walk(node.get(key))
+
+    for block in LD_JSON_RE.findall(raw_html):
+        try:
+            walk(json.loads(block))
+        except ValueError:
+            continue
+    if not products:
+        return {"structured_data": "not detected"}
+    prices, currencies, availability = [], set(), Counter()
+    for product in products:
+        offers = product.get("offers")
+        offers = offers if isinstance(offers, list) else [offers] if isinstance(offers, dict) else []
+        for offer in offers:
+            for key in ("price", "lowPrice", "highPrice"):
+                value = to_float(offer.get(key))
+                if value is not None:
+                    prices.append(value)
+            if offer.get("priceCurrency"):
+                currencies.add(str(offer["priceCurrency"]))
+            if offer.get("availability"):
+                availability[str(offer["availability"]).rstrip("/").rsplit("/", 1)[-1]] += 1
+    return {
+        "name": products[0].get("name"),
+        "price_min": _fmt(min(prices)) if prices else None,
+        "price_max": _fmt(max(prices)) if prices else None,
+        "currency": ", ".join(sorted(currencies)) or None,
+        "offers_by_availability": dict(availability),
+    }
+
+
+def read_product_page(fetcher, path, notes):
+    """The product page the merchant pasted: price, availability, promo lines."""
+    res = fetcher.get(path, "product page from the input URL")
+    if res.get("status") != 200:
+        reason = describe_failure(res)
+        notes.append("The product page from the input URL could not be read: " + reason + ".")
+        return {"path": path, "status": "not read", "reason": reason}
+    text = parse_page(res["text"])["text"]
+    promos, seen = [], set()
+    for m in PROMO_RE.finditer(text):
+        if m.group(0).lower() not in seen:
+            seen.add(m.group(0).lower())
+            promos.append({"phrase": m.group(0), "evidence": snippet(text, m.start(), m.end(), 50)})
+    info = {"path": path, "status": "read"}
+    info.update(structured_offer(res["text"]))
+    info["promo_phrases"] = promos[:5]
+    return info
 
 
 def analyze_store(url, role, args, now):
-    origin = normalize_origin(url)
-    fetcher = Fetcher(origin, args.delay, args.max_wait)
+    origin, prefix, input_path = split_input(url)
+    fetcher = Fetcher(origin, args.delay, args.max_wait, prefix)
     notes = []
     out = {"input_url": url, "role": role, "origin": origin}
 
+    def stop(note, platform_type="unknown", **extra):
+        notes.append(note)
+        out.update(origin=fetcher.origin, platform={"type": platform_type}, data_notes=notes,
+                   confidence="none", requests={"made": fetcher.made, "log": fetcher.log}, **extra)
+        return out, None, False
+
+    def network_stop():
+        host = urllib.parse.urlsplit(fetcher.origin).netloc
+        return stop(f"Could not connect to {host} from this environment ({fetcher.network_error}). "
+                    "This is a connection problem on our side, not a block by the store.",
+                    fetch_error="network")
+
     fetcher.load_robots()
     out["robots_txt"] = fetcher.robots_status
+    if fetcher.network_error:
+        return network_stop()
 
     home = fetcher.get("/", "homepage")
     if home.get("status") != 200:
+        if "skipped" not in home and home.get("status") is None:
+            return network_stop()
         reason = describe_failure(home)
-        notes.append("Homepage could not be read: " + reason + ". Nothing else was fetched.")
-        out.update(platform={"type": "unknown"}, data_notes=notes, confidence="none",
-                   requests={"made": fetcher.made, "log": fetcher.log})
-        return out, None, False
+        if "skipped" in home and fetcher.robots_status.startswith("server error"):
+            reason = ("its robots.txt answered with a server error, which the robots.txt standard "
+                      "treats as a request not to read the site")
+        return stop("Homepage could not be read: " + reason + ". Nothing else was fetched.")
     final = urllib.parse.urlsplit(home["url"])
     new_origin = f"{final.scheme}://{final.netloc}"
     if _bare_host(final.netloc) != _bare_host(urllib.parse.urlsplit(origin).netloc):
@@ -740,21 +856,30 @@ def analyze_store(url, role, args, now):
         fetcher.origin = new_origin
         fetcher.load_robots()
         out["robots_txt"] = fetcher.robots_status + f" (for {final.netloc})"
-        if not robots_allows(fetcher.rules, "/"):
-            notes.append(f"The robots.txt of {final.netloc} asks tools not to read it. Nothing else was fetched.")
-            out.update(origin=fetcher.origin, platform={"type": "unknown"}, data_notes=notes, confidence="none",
-                       requests={"made": fetcher.made, "log": fetcher.log})
-            return out, None, False
+        if fetcher.network_error:
+            return network_stop()
+        if not robots_allows(fetcher.rules, fetcher.prefix or "/"):
+            return stop(f"The robots.txt of {final.netloc} asks tools not to read it. Nothing else was fetched.")
     fetcher.origin = new_origin
     out["origin"] = fetcher.origin
     if final.path.rstrip("/").endswith("/password"):
-        notes.append("The store is password protected. Nothing else was fetched.")
-        out.update(platform={"type": "shopify_password_protected"}, data_notes=notes, confidence="none",
-                   requests={"made": fetcher.made, "log": fetcher.log})
-        return out, None, False
+        return stop("The store is password protected. Nothing else was fetched.", "shopify_password_protected")
+    if not fetcher.prefix:
+        # The homepage itself may send visitors to a regional storefront.
+        m = LOCALE_RE.match(final.path)
+        if m and final.path.rstrip("/") == m.group(0):
+            fetcher.prefix = "/" + m.group(1).lower()
+    out["storefront"] = fetcher.origin + (fetcher.prefix or "/")
+    if fetcher.prefix:
+        notes.append(f"Read the {fetcher.prefix} regional storefront. Other regions of this store can show "
+                     "different prices, products and policies.")
+    lang = HTML_LANG_RE.search(home["text"])
+    out["page_language"] = lang.group(1) if lang else None
 
     page = parse_page(home["text"])
     signals, theme = detect_platform(home)
+    product_match = PRODUCT_PATH_RE.search(input_path)
+    input_product = read_product_page(fetcher, input_path, notes) if product_match else None
     if len(page["links"]) < 10 or len(page["text"].split()) < 200:
         out["homepage_thin"] = True
         notes.append("The homepage returned very little content (possibly a bot check or a page that needs "
@@ -809,6 +934,16 @@ def analyze_store(url, role, args, now):
             "ships_to_countries_count": len(meta.get("ships_to_countries") or []),
             "shop_pay_installments": meta.get("offers_shop_pay_installments"),
         }
+
+    if input_product is not None:
+        handle = urllib.parse.unquote(product_match.group(1)).lower()
+        match = next((p for p in products if (p.get("handle") or "").lower() == handle), None)
+        if match:
+            variants = match.get("variants") or []
+            input_product["catalog"] = dict(
+                product_price(match), title=match.get("title"), variants=len(variants),
+                variants_sold_out=sum(1 for v in variants if not v.get("available")))
+        out["input_product"] = input_product
 
     if products:
         out["catalog"] = catalog_metrics(products, now)
@@ -898,8 +1033,8 @@ def _main_text(raw_html):
 
 
 POLICY_PATHS = {"shipping": "/policies/shipping-policy", "refund": "/policies/refund-policy"}
-POLICY_LINK_WORDS = {"shipping": re.compile(r"shipping|delivery", re.I),
-                     "refund": re.compile(r"return|refund|exchange", re.I)}
+POLICY_LINK_WORDS = {"shipping": re.compile(r"shipping|delivery|livraison|expédition", re.I),
+                     "refund": re.compile(r"return|refund|exchange|guarantee|retour|rembours|échange|garantie", re.I)}
 
 
 def fetch_policies(fetcher, page, platform_type, notes):
@@ -926,12 +1061,13 @@ def fetch_policies(fetcher, page, platform_type, notes):
                 if not (POLICY_LINK_WORDS[kind].search(label or "") or POLICY_LINK_WORDS[kind].search(parts.path)):
                     continue
                 path = parts.path or "/"
-                if path in ("/", POLICY_PATHS[kind]) or "/products/" in path or "/collections/" in path:
+                if (path.rstrip("/") in ("", fetcher.prefix) or path.endswith(POLICY_PATHS[kind])
+                        or "/products/" in path or "/collections/" in path):
                     continue
                 if parts.netloc != home_host:
                     info.setdefault("linked_to_other_site", f"{parts.scheme}://{parts.netloc}{path}")
                     continue
-                res = fetcher.get(path, f"{kind} page linked from homepage")
+                res = fetcher.get(path, f"{kind} page linked from homepage", localized=False)
                 if res.get("status") == 200:
                     body = _main_text(res["text"])
                     if len(body.split()) > 40:
@@ -1035,9 +1171,12 @@ def handle_tracking(store_out, products, capped, args, now):
     if not products:
         store_out["track"] = {"status": "no snapshot: product data not available"}
         return
-    snap = snapshot_of(products, store_out["origin"], capped, now)
-    host = urllib.parse.urlsplit(store_out["origin"]).netloc
-    folder = Path(args.snapshot_dir).expanduser() / host
+    storefront = store_out.get("storefront") or store_out["origin"]
+    snap = snapshot_of(products, storefront, capped, now)
+    host = urllib.parse.urlsplit(storefront).netloc
+    # One folder per regional storefront: /en-ca and /fr-ca have their own prices.
+    region = urllib.parse.urlsplit(storefront).path.strip("/")
+    folder = Path(args.snapshot_dir).expanduser() / (host + ("-" + region if region else ""))
     previous_path = None
     if args.previous:
         previous_path = Path(args.previous).expanduser()
@@ -1116,8 +1255,14 @@ def main(argv=None):
         if args.track and role == "competitor":
             handle_tracking(store_out, products, capped, args, now)
         report["stores"].append(store_out)
+    if all(s.get("fetch_error") == "network" for s in report["stores"]):
+        report["fetch_error"] = "network"
     json.dump(report, sys.stdout, indent=1, ensure_ascii=False)
     print()
+    if report.get("fetch_error"):
+        print("No store could be reached from this environment (network blocked). "
+              "Use the fallback method.", file=sys.stderr)
+        return 2
     return 0
 
 

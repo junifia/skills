@@ -1,6 +1,6 @@
 {
   "name": "shopify-audits",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Plain-language audits for Shopify stores, starting with a competitor teardown built from public pages. Read-only, evidence-based, no code.",
   "author": {
     "name": "Junifia",
@@ -9,5 +9,11 @@
   "homepage": "https://github.com/junifia/skills",
   "repository": "https://github.com/junifia/skills",
   "license": "MIT",
-  "keywords": ["shopify", "competitor-analysis", "audit", "pricing", "ecommerce"]
+  "keywords": [
+    "shopify",
+    "competitor-analysis",
+    "audit",
+    "pricing",
+    "ecommerce"
+  ]
 }
