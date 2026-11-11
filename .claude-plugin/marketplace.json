@@ -1,0 +1,41 @@
+{
+  "name": "junifia",
+  "owner": {
+    "name": "Junifia",
+    "url": "https://junifia.ca"
+  },
+  "metadata": {
+    "description": "Free, plain-language skills that help Shopify merchants plan and run their store. Read-only, beginner friendly.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "shopify-audits",
+      "source": "./plugins/shopify-audits",
+      "description": "Plain-language audits for Shopify stores: competitor teardown from public pages, with compare and tracking modes.",
+      "version": "0.1.0",
+      "category": "ecommerce",
+      "keywords": [
+        "shopify",
+        "competitor-analysis",
+        "audit",
+        "pricing",
+        "ecommerce"
+      ]
+    },
+    {
+      "name": "bfcm",
+      "source": "./plugins/bfcm",
+      "description": "Get your Shopify store ready for Black Friday and Cyber Monday: readiness audit, offer planning, email drafts and a launch-day runbook.",
+      "version": "0.1.0",
+      "category": "ecommerce",
+      "keywords": [
+        "shopify",
+        "bfcm",
+        "black-friday",
+        "cyber-monday",
+        "ecommerce"
+      ]
+    }
+  ]
+}
