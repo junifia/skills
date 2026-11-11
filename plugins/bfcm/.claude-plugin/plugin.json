@@ -1,0 +1,13 @@
+{
+  "name": "bfcm",
+  "version": "0.1.0",
+  "description": "Get your Shopify store ready for Black Friday and Cyber Monday: readiness audit, offer planning, email drafts and a launch-day runbook. Read-only, plain language, no code.",
+  "author": {
+    "name": "Junifia",
+    "url": "https://junifia.ca"
+  },
+  "homepage": "https://github.com/junifia/skills",
+  "repository": "https://github.com/junifia/skills",
+  "license": "MIT",
+  "keywords": ["shopify", "bfcm", "black-friday", "cyber-monday", "ecommerce"]
+}
