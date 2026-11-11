@@ -35,6 +35,10 @@ Each entry in `stores` is one store. `role` is `competitor` or `own`.
 | `data_notes` | Everything that was blocked, capped, skipped or missing | Goes into the Data notes section, in plain words. |
 | `homepage_thin` | The homepage returned almost nothing (bot check or JavaScript-only page) | Treat homepage findings (apps, promos, announcement) as incomplete. Do not call it a block: the store answered, it just showed little. |
 | `data_notes` mentioning "sent visitors to" | The site redirected to another address, often a regional store | Say which store the results describe (for example the US store). |
+| `storefront` | The exact storefront that was read, including a regional path such as `/en-ca` | When it has a regional path, say in the snapshot which region the prices and policies are for. |
+| `page_language` | The language the store's homepage declares | Used to pick the report language for the merchant's own store. Not a finding. |
+| `input_product` | The product page the merchant pasted: name, price range, currency, availability counts from the page's product data, promo lines, and `catalog` facts when the product was also in the product list | Put it first in Offer and pricing ("The product you asked about..."). `structured_data: not detected` means the page had no machine-readable price, so do not state one. |
+| `fetch_error` | `network`: this environment could not connect to the store | Not a block by the store. Switch to the fallback in SKILL.md for this store. |
 
 ## Report structure (Teardown)
 
@@ -148,3 +152,4 @@ Then list the most notable changes (biggest price moves, new products with price
 - Say "not detected" with the reason, never "they don't have": "No free shipping offer detected on their homepage or shipping policy."
 - Do not repeat the same caveat in several sections. Put it once where it matters and once in Data notes.
 - No em dashes. Use commas, parentheses or a new sentence.
+- In a report that is not in English, these rules still apply, translated. Use the number format of that language (for example "29,98 $" in French) and keep the closing line in English.
